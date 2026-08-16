@@ -1533,13 +1533,15 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
     float progress = fx.params[2];
     float cell = fx.params[3] > 4.0 ? fx.params[3] : 22.0;
     float t = fx.time * speed;
-    float seed = fx.seed;
     float4 accent = hsla_to_rgba(fx.color1);
 
-    float2 drift = float2(t * 0.055, -t * 0.04);
-    float field = effect_fbm(uv * 2.35 + drift + seed * 0.17);
+    float2 seed2 = effect_hash22(float2(fx.seed, fx.seed * 1.6180339887));
+    float2 heading = normalize(seed2 * 2.0 - 1.0);
+    float scale = lerp(1.7, 2.9, seed2.x);
+    float2 drift = heading * t * 0.22;
+    float field = effect_fbm(uv * scale + drift + seed2 * 6.0);
     if (fx.kind == 1u) {
-        field = lerp(0.46, field, 0.32);
+        field = lerp(0.40, field, 0.38);
     }
     if (progress > 0.0) {
         float2 dir = normalize(float2(0.9, 0.22));
@@ -1548,21 +1550,18 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
         field = max(field, band * 0.8);
     }
 
-    float wash = lerp(0.02, 0.13, field) * intensity;
-
-    float2 grid = local / cell;
+    float2 count = ceil(safe / cell);
+    float2 grid_origin = (safe - count * cell) * 0.5;
+    float2 grid = (local - grid_origin) / cell;
     float2 id = floor(grid);
     float2 f = frac(grid) - 0.5;
-    float2 count = size / cell;
     float in_grid = step(0.0, id.x) * step(0.0, id.y) * step(id.x, count.x - 1.0) * step(id.y, count.y - 1.0);
     float dist = length(f) * cell;
     float radius = max(1.6, cell * 0.145);
     float dot_m = (1.0 - smoothstep(radius - 0.55, radius + 0.55, dist)) * in_grid;
-    float lit = smoothstep(0.22, 0.70, field);
-    float dot_a = dot_m * lerp(0.10, 0.88, lit) * intensity;
-
-    float alpha = wash + dot_a * (1.0 - wash);
-    return float4(accent.rgb, alpha);
+    float lit = smoothstep(0.54, 0.86, field);
+    float dot_a = dot_m * lit * lit * intensity;
+    return float4(accent.rgb, dot_a);
 }
 
 struct EffectQuadVertexOutput {

@@ -1706,13 +1706,15 @@ fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
     let progress = fx.params[2];
     let cell = select(22.0, fx.params[3], fx.params[3] > 4.0);
     let t = fx.time * speed;
-    let seed = fx.seed;
     let accent = hsla_to_rgba(fx.color1);
 
-    let drift = vec2<f32>(t * 0.055, -t * 0.04);
-    var field = effect_fbm(uv * 2.35 + drift + seed * 0.17);
+    let seed2 = effect_hash22(vec2<f32>(fx.seed, fx.seed * 1.6180339887));
+    let heading = normalize(seed2 * 2.0 - 1.0);
+    let scale = mix(1.7, 2.9, seed2.x);
+    let drift = heading * t * 0.22;
+    var field = effect_fbm(uv * scale + drift + seed2 * 6.0);
     if (fx.kind == 1u) {
-        field = mix(0.46, field, 0.32);
+        field = mix(0.40, field, 0.38);
     }
     if (progress > 0.0) {
         let dir = normalize(vec2<f32>(0.9, 0.22));
@@ -1721,21 +1723,18 @@ fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
         field = max(field, band * 0.8);
     }
 
-    let wash = mix(0.02, 0.13, field) * intensity;
-
-    let grid = local / cell;
+    let count = ceil(safe / cell);
+    let grid_origin = (safe - count * cell) * 0.5;
+    let grid = (local - grid_origin) / cell;
     let id = floor(grid);
     let f = fract(grid) - 0.5;
-    let count = size / cell;
     let in_grid = step(0.0, id.x) * step(0.0, id.y) * step(id.x, count.x - 1.0) * step(id.y, count.y - 1.0);
     let dist = length(f) * cell;
     let radius = max(1.6, cell * 0.145);
     let dot_m = (1.0 - smoothstep(radius - 0.55, radius + 0.55, dist)) * in_grid;
-    let lit = smoothstep(0.22, 0.70, field);
-    let dot_a = dot_m * mix(0.10, 0.88, lit) * intensity;
-
-    let alpha = wash + dot_a * (1.0 - wash);
-    return vec4<f32>(accent.rgb, alpha);
+    let lit = smoothstep(0.54, 0.86, field);
+    let dot_a = dot_m * lit * lit * intensity;
+    return vec4<f32>(accent.rgb, dot_a);
 }
 
 struct EffectQuadVarying {
