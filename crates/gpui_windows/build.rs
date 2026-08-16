@@ -33,6 +33,7 @@ mod shader_compilation {
             "backdrop_pass",
             "backdrop_composite",
             "quad",
+            "effect_quad",
             "shadow",
             "path_rasterization",
             "path_sprite",

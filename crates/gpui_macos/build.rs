@@ -53,6 +53,8 @@ mod macos_build {
             "BackdropBlurInputIndex".into(),
             "BackdropBlur".into(),
             "QuadInputIndex".into(),
+            "EffectQuadInputIndex".into(),
+            "EffectQuad".into(),
             "Underline".into(),
             "UnderlineInputIndex".into(),
             "Quad".into(),

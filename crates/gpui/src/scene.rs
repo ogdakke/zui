@@ -44,6 +44,7 @@ pub struct Scene {
     layer_stack: Vec<DrawOrder>,
     pub shadows: Vec<Shadow>,
     pub quads: Vec<Quad>,
+    pub effect_quads: Vec<EffectQuad>,
     pub paths: Vec<Path<ScaledPixels>>,
     pub underlines: Vec<Underline>,
     pub monochrome_sprites: Vec<MonochromeSprite>,
@@ -65,6 +66,7 @@ impl Scene {
         self.paths.clear();
         self.shadows.clear();
         self.quads.clear();
+        self.effect_quads.clear();
         self.underlines.clear();
         self.monochrome_sprites.clear();
         self.subpixel_sprites.clear();
@@ -135,6 +137,10 @@ impl Scene {
                 quad.order = order;
                 self.quads.push(*quad);
             }
+            Primitive::EffectQuad(effect) => {
+                effect.order = order;
+                self.effect_quads.push(*effect);
+            }
             Primitive::Path(path) => {
                 path.order = order;
                 path.id = PathId(self.paths.len());
@@ -179,6 +185,7 @@ impl Scene {
     pub fn finish(&mut self) {
         self.shadows.sort_by_key(|shadow| shadow.order);
         self.quads.sort_by_key(|quad| quad.order);
+        self.effect_quads.sort_by_key(|effect| effect.order);
         self.paths.sort_by_key(|path| path.order);
         self.underlines.sort_by_key(|underline| underline.order);
         self.monochrome_sprites
@@ -204,6 +211,8 @@ impl Scene {
             shadows_iter: self.shadows.iter().peekable(),
             quads_start: 0,
             quads_iter: self.quads.iter().peekable(),
+            effect_quads_start: 0,
+            effect_quads_iter: self.effect_quads.iter().peekable(),
             paths_start: 0,
             paths_iter: self.paths.iter().peekable(),
             underlines_start: 0,
@@ -233,6 +242,7 @@ pub(crate) enum PrimitiveKind {
     Shadow,
     #[default]
     Quad,
+    EffectQuad,
     Path,
     Underline,
     MonochromeSprite,
@@ -253,6 +263,7 @@ pub(crate) enum PaintOperation {
 pub enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
+    EffectQuad(EffectQuad),
     Path(Path<ScaledPixels>),
     Underline(Underline),
     MonochromeSprite(MonochromeSprite),
@@ -267,6 +278,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.bounds,
             Primitive::Quad(quad) => &quad.bounds,
+            Primitive::EffectQuad(effect) => &effect.bounds,
             Primitive::Path(path) => &path.bounds,
             Primitive::Underline(underline) => &underline.bounds,
             Primitive::MonochromeSprite(sprite) => &sprite.bounds,
@@ -280,6 +292,7 @@ impl Primitive {
         match self {
             Primitive::Shadow(shadow) => &shadow.content_mask,
             Primitive::Quad(quad) => &quad.content_mask,
+            Primitive::EffectQuad(effect) => &effect.content_mask,
             Primitive::Path(path) => &path.content_mask,
             Primitive::Underline(underline) => &underline.content_mask,
             Primitive::MonochromeSprite(sprite) => &sprite.content_mask,
@@ -302,6 +315,8 @@ struct BatchIterator<'a> {
     shadows_iter: Peekable<slice::Iter<'a, Shadow>>,
     quads_start: usize,
     quads_iter: Peekable<slice::Iter<'a, Quad>>,
+    effect_quads_start: usize,
+    effect_quads_iter: Peekable<slice::Iter<'a, EffectQuad>>,
     paths_start: usize,
     paths_iter: Peekable<slice::Iter<'a, Path<ScaledPixels>>>,
     underlines_start: usize,
@@ -327,6 +342,10 @@ impl<'a> Iterator for BatchIterator<'a> {
                 PrimitiveKind::Shadow,
             ),
             (self.quads_iter.peek().map(|q| q.order), PrimitiveKind::Quad),
+            (
+                self.effect_quads_iter.peek().map(|q| q.order),
+                PrimitiveKind::EffectQuad,
+            ),
             (self.paths_iter.peek().map(|q| q.order), PrimitiveKind::Path),
             (
                 self.underlines_iter.peek().map(|u| u.order),
@@ -399,6 +418,22 @@ impl<'a> Iterator for BatchIterator<'a> {
                 }
                 self.quads_start = quads_end;
                 Some(PrimitiveBatch::Quads(quads_start..quads_end))
+            }
+            PrimitiveKind::EffectQuad => {
+                let effect_quads_start = self.effect_quads_start;
+                let mut effect_quads_end = effect_quads_start + 1;
+                self.effect_quads_iter.next();
+                while self
+                    .effect_quads_iter
+                    .next_if(|effect| (effect.order, batch_kind) < max_order_and_kind)
+                    .is_some()
+                {
+                    effect_quads_end += 1;
+                }
+                self.effect_quads_start = effect_quads_end;
+                Some(PrimitiveBatch::EffectQuads(
+                    effect_quads_start..effect_quads_end,
+                ))
             }
             PrimitiveKind::Path => {
                 let paths_start = self.paths_start;
@@ -521,6 +556,7 @@ impl<'a> Iterator for BatchIterator<'a> {
 pub enum PrimitiveBatch {
     Shadows(Range<usize>),
     Quads(Range<usize>),
+    EffectQuads(Range<usize>),
     Paths(Range<usize>),
     Underlines(Range<usize>),
     MonochromeSprites {
@@ -546,6 +582,7 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => scene.shadows[range.start].order,
             Self::Quads(range) => scene.quads[range.start].order,
+            Self::EffectQuads(range) => scene.effect_quads[range.start].order,
             Self::Paths(range) => scene.paths[range.start].order,
             Self::Underlines(range) => scene.underlines[range.start].order,
             Self::MonochromeSprites { range, .. } => scene.monochrome_sprites[range.start].order,
@@ -560,6 +597,7 @@ impl PrimitiveBatch {
         match self {
             Self::Shadows(range) => format!("shadows ({})", range.len()),
             Self::Quads(range) => format!("quads ({})", range.len()),
+            Self::EffectQuads(range) => format!("effect quads ({})", range.len()),
             Self::Paths(range) => format!("paths ({})", range.len()),
             Self::Underlines(range) => format!("underlines ({})", range.len()),
             Self::MonochromeSprites { texture_id, range } => {
@@ -638,6 +676,50 @@ pub struct Quad {
 impl From<Quad> for Primitive {
     fn from(quad: Quad) -> Self {
         Primitive::Quad(quad)
+    }
+}
+
+/// Built-in fragment effect drawn by [`EffectQuad`].
+///
+/// These are compiled into each platform shader library. Application code
+/// selects one and supplies uniforms — it cannot inject shader source.
+#[derive(Default, Debug, Copy, Clone, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EffectKind {
+    /// Hash-field stars with a slow nebula and optional progress wash.
+    #[default]
+    StarShimmer = 0,
+    /// Quiet value-noise fill for queued / idle placeholders.
+    SoftNoise = 1,
+    /// Diagonal progress band over a solid fill.
+    ProgressWash = 2,
+}
+
+/// A rounded rect whose fill is a catalogued fragment effect.
+///
+/// Time is written per instance (same value for every effect in a frame) so
+/// the batch stays a single draw. `params` is effect-specific:
+/// `[speed, intensity, progress, density, _, _, _, _]`.
+#[derive(Default, Debug, Copy, Clone)]
+#[repr(C)]
+#[expect(missing_docs)]
+pub struct EffectQuad {
+    pub order: DrawOrder,
+    pub kind: u32,
+    pub bounds: Bounds<ScaledPixels>,
+    pub content_mask: ContentMask<ScaledPixels>,
+    pub corner_radii: Corners<ScaledPixels>,
+    pub fade: EdgeFadeParams,
+    pub seed: f32,
+    pub time: f32,
+    pub params: [f32; 8],
+    pub color0: Hsla,
+    pub color1: Hsla,
+}
+
+impl From<EffectQuad> for Primitive {
+    fn from(effect: EffectQuad) -> Self {
+        Primitive::EffectQuad(effect)
     }
 }
 

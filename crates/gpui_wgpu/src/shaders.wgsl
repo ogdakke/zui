@@ -1648,3 +1648,154 @@ fn fs_backdrop_blur(input: BackdropBlurVarying) -> @location(0) vec4<f32> {
     let uv = (input.device_position - params.source_rect.xy) / params.source_rect.zw;
     return textureSampleLevel(t_backdrop_blurred, s_backdrop_blurred, uv, 0.0);
 }
+
+// --- effect quads --- //
+
+struct EffectQuad {
+    order: u32,
+    kind: u32,
+    bounds: Bounds,
+    content_mask: Bounds,
+    corner_radii: Corners,
+    fade: EdgeFadeParams,
+    seed: f32,
+    time: f32,
+    params: array<f32, 8>,
+    color0: Hsla,
+    color1: Hsla,
+}
+
+@group(1) @binding(0) var<storage, read> b_effect_quads: array<EffectQuad>;
+
+fn effect_hash21(p: vec2<f32>) -> f32 {
+    return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
+}
+
+fn effect_hash22(p: vec2<f32>) -> vec2<f32> {
+    let n = sin(dot(p, vec2<f32>(127.1, 311.7)));
+    return fract(vec2<f32>(262144.0, 32768.0) * n);
+}
+
+fn effect_noise21(p: vec2<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = effect_hash21(i);
+    let b = effect_hash21(i + vec2<f32>(1.0, 0.0));
+    let c = effect_hash21(i + vec2<f32>(0.0, 1.0));
+    let d = effect_hash21(i + vec2<f32>(1.0, 1.0));
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+fn effect_stars_layer(uv: vec2<f32>, density: f32, time: f32, seed: f32, twinkle: f32) -> f32 {
+    let g = floor(uv);
+    let f = fract(uv) - 0.5;
+    let rnd = effect_hash22(g + seed);
+    let keep = step(1.0 - density, rnd.x);
+    let off = (rnd - 0.5) * 0.7;
+    let d = f - off;
+    let dist = length(d);
+    let size = mix(0.012, 0.045, rnd.y);
+    let core = smoothstep(size, 0.0, dist);
+    let glow = exp(-dist * mix(18.0, 40.0, rnd.y)) * 0.55;
+    let phase = rnd.x * 6.28318 + time * mix(1.2, 3.4, rnd.y);
+    let flicker = mix(1.0, 0.45 + 0.55 * sin(phase), twinkle);
+    return (core + glow) * keep * flicker;
+}
+
+fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
+    let origin = fx.bounds.origin;
+    let size = max(fx.bounds.size, vec2<f32>(1.0, 1.0));
+    let uv = (position - origin) / size;
+    let aspect = fx.bounds.size.x / max(fx.bounds.size.y, 1.0);
+    let p = (uv - 0.5) * vec2<f32>(aspect, 1.0);
+
+    let speed = fx.params[0];
+    let intensity = fx.params[1];
+    let progress = fx.params[2];
+    let density = select(0.18, fx.params[3], fx.params[3] > 0.0);
+    let t = fx.time * speed;
+    let seed = fx.seed;
+
+    let base = hsla_to_rgba(fx.color0);
+    let accent = hsla_to_rgba(fx.color1);
+
+    if (fx.kind == 1u) {
+        var n = effect_noise21(p * 6.0 + seed);
+        n = mix(n, effect_noise21(p * 14.0 - seed * 0.3), 0.45);
+        let v = n * intensity;
+        return vec4<f32>(mix(base.rgb, accent.rgb, v * 0.35), base.a);
+    }
+
+    if (fx.kind == 2u) {
+        let dir = normalize(vec2<f32>(0.85, 0.35));
+        let x = dot(uv - 0.5, dir) + 0.5;
+        let band = smoothstep(progress - 0.18, progress, x) * (1.0 - smoothstep(progress, progress + 0.22, x));
+        let wash = band * intensity;
+        return vec4<f32>(mix(base.rgb, accent.rgb, wash), base.a * mix(1.0, 0.55, wash));
+    }
+
+    let drift = vec2<f32>(t * 0.018, t * -0.011);
+    var nebula = effect_noise21(p * 3.2 + drift + seed);
+    nebula = mix(nebula, effect_noise21(p * 8.0 - drift * 1.4), 0.5);
+    var col = mix(base.rgb, accent.rgb * 0.35, nebula * 0.22 * intensity);
+
+    var s = 0.0;
+    s += effect_stars_layer(p * 18.0 + drift * 2.0, density, t, seed, 1.0);
+    s += effect_stars_layer(p * 32.0 - drift * 3.2, density * 0.55, t * 1.3, seed + 17.0, 1.0) * 0.75;
+    s += effect_stars_layer(p * 9.0 + vec2<f32>(-drift.y, drift.x) * 1.6, density * 0.22, t * 0.7, seed + 41.0, 0.65) * 1.35;
+
+    let g = floor(p * 5.5 + seed);
+    let f = fract(p * 5.5 + seed) - 0.5;
+    let rnd = effect_hash22(g + 91.0);
+    if (rnd.x > 0.92) {
+        let d = f - (rnd - 0.5) * 0.3;
+        let dist = length(d);
+        let spark = exp(-dist * 14.0);
+        let cross = exp(-abs(d.x) * 55.0) * exp(-abs(d.y) * 8.0)
+            + exp(-abs(d.y) * 55.0) * exp(-abs(d.x) * 8.0);
+        let tw = 0.5 + 0.5 * sin(t * 2.2 + rnd.y * 6.28318);
+        s += (spark * 0.65 + cross * 0.45) * tw;
+    }
+
+    col += accent.rgb * s * intensity;
+
+    if (progress > 0.0) {
+        let dir = normalize(vec2<f32>(0.9, 0.25));
+        let x = dot(uv - 0.5, dir) + 0.5;
+        let band = smoothstep(progress - 0.16, progress, x) * (1.0 - smoothstep(progress, progress + 0.2, x));
+        col = mix(col, accent.rgb, band * 0.22);
+    }
+
+    return vec4<f32>(col, base.a);
+}
+
+struct EffectQuadVarying {
+    @builtin(position) position: vec4<f32>,
+    @location(0) @interpolate(flat) effect_id: u32,
+    @location(1) clip_distances: vec4<f32>,
+}
+
+@vertex
+fn vs_effect_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) instance_id: u32) -> EffectQuadVarying {
+    let unit_vertex = vec2<f32>(f32(vertex_id & 1u), 0.5 * f32(vertex_id & 2u));
+    let fx = b_effect_quads[instance_id];
+    var out = EffectQuadVarying();
+    out.position = to_device_position(unit_vertex, fx.bounds);
+    out.effect_id = instance_id;
+    out.clip_distances = distance_from_clip_rect(unit_vertex, fx.bounds, fx.content_mask);
+    return out;
+}
+
+@fragment
+fn fs_effect_quad(input: EffectQuadVarying) -> @location(0) vec4<f32> {
+    if (any(input.clip_distances < vec4<f32>(0.0))) {
+        return vec4<f32>(0.0);
+    }
+    let fx = b_effect_quads[input.effect_id];
+    var color = evaluate_effect(fx, input.position.xy);
+    color.a *= edge_fade_alpha(input.position.xy, fx.fade);
+    let distance = quad_sdf(input.position.xy, fx.bounds, fx.corner_radii);
+    color.a *= saturate(0.5 - distance);
+    return color;
+}

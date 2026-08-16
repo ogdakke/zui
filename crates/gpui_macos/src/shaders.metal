@@ -1445,3 +1445,164 @@ fragment float4 backdrop_blur_fragment(
   float2 uv = (input.position.xy - source_rect.xy) / source_rect.zw;
   return source_texture.sample(source_sampler, uv);
 }
+
+/*
+**
+**              Effect quads
+**
+*/
+
+float effect_hash11(float n) {
+  return fract(sin(n) * 43758.5453123);
+}
+
+float effect_hash21(float2 p) {
+  return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
+}
+
+float2 effect_hash22(float2 p) {
+  float n = sin(dot(p, float2(127.1, 311.7)));
+  return fract(float2(262144.0, 32768.0) * n);
+}
+
+float effect_noise21(float2 p) {
+  float2 i = floor(p);
+  float2 f = fract(p);
+  float2 u = f * f * (3.0 - 2.0 * f);
+  float a = effect_hash21(i);
+  float b = effect_hash21(i + float2(1.0, 0.0));
+  float c = effect_hash21(i + float2(0.0, 1.0));
+  float d = effect_hash21(i + float2(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
+float effect_stars_layer(float2 uv, float density, float time, float seed,
+                         float twinkle) {
+  float2 g = floor(uv);
+  float2 f = fract(uv) - 0.5;
+  float2 rnd = effect_hash22(g + seed);
+  float keep = step(1.0 - density, rnd.x);
+  float2 off = (rnd - 0.5) * 0.7;
+  float2 d = f - off;
+  float dist = length(d);
+  float size = mix(0.012, 0.045, rnd.y);
+  float core = smoothstep(size, 0.0, dist);
+  float glow = exp(-dist * mix(18.0, 40.0, rnd.y)) * 0.55;
+  float phase = rnd.x * 6.28318 + time * mix(1.2, 3.4, rnd.y);
+  float flicker = mix(1.0, 0.45 + 0.55 * sin(phase), twinkle);
+  return (core + glow) * keep * flicker;
+}
+
+float4 evaluate_effect(EffectQuad fx, float2 position) {
+  float2 origin = float2(fx.bounds.origin.x, fx.bounds.origin.y);
+  float2 size = float2(fx.bounds.size.width, fx.bounds.size.height);
+  float2 safe = max(size, float2(1.0, 1.0));
+  float2 uv = (position - origin) / safe;
+  float aspect = size.x / max(size.y, 1.0);
+  float2 p = (uv - 0.5) * float2(aspect, 1.0);
+
+  float speed = fx.params[0];
+  float intensity = fx.params[1];
+  float progress = fx.params[2];
+  float density = fx.params[3] > 0.0 ? fx.params[3] : 0.18;
+  float t = fx.time * speed;
+  float seed = fx.seed;
+
+  float4 base = hsla_to_rgba(fx.color0);
+  float4 accent = hsla_to_rgba(fx.color1);
+
+  if (fx.kind == 1u) {
+    float n = effect_noise21(p * 6.0 + seed);
+    n = mix(n, effect_noise21(p * 14.0 - seed * 0.3), 0.45);
+    float v = n * intensity;
+    return float4(mix(base.rgb, accent.rgb, v * 0.35), base.a);
+  }
+
+  if (fx.kind == 2u) {
+    float2 dir = normalize(float2(0.85, 0.35));
+    float x = dot(uv - 0.5, dir) + 0.5;
+    float band = smoothstep(progress - 0.18, progress, x) *
+                 (1.0 - smoothstep(progress, progress + 0.22, x));
+    float wash = band * intensity;
+    return float4(mix(base.rgb, accent.rgb, wash),
+                  base.a * mix(1.0, 0.55, wash));
+  }
+
+  float2 drift = float2(t * 0.018, t * -0.011);
+  float nebula = effect_noise21(p * 3.2 + drift + seed);
+  nebula = mix(nebula, effect_noise21(p * 8.0 - drift * 1.4), 0.5);
+  float3 col = mix(base.rgb, accent.rgb * 0.35, nebula * 0.22 * intensity);
+
+  float s = 0.0;
+  s += effect_stars_layer(p * 18.0 + drift * 2.0, density, t, seed, 1.0);
+  s += effect_stars_layer(p * 32.0 - drift * 3.2, density * 0.55, t * 1.3,
+                          seed + 17.0, 1.0) *
+       0.75;
+  s += effect_stars_layer(p * 9.0 + float2(-drift.y, drift.x) * 1.6,
+                          density * 0.22, t * 0.7, seed + 41.0, 0.65) *
+       1.35;
+
+  float2 g = floor(p * 5.5 + seed);
+  float2 f = fract(p * 5.5 + seed) - 0.5;
+  float2 rnd = effect_hash22(g + 91.0);
+  if (rnd.x > 0.92) {
+    float2 d = f - (rnd - 0.5) * 0.3;
+    float dist = length(d);
+    float spark = exp(-dist * 14.0);
+    float cross = exp(-abs(d.x) * 55.0) * exp(-abs(d.y) * 8.0) +
+                  exp(-abs(d.y) * 55.0) * exp(-abs(d.x) * 8.0);
+    float tw = 0.5 + 0.5 * sin(t * 2.2 + rnd.y * 6.28318);
+    s += (spark * 0.65 + cross * 0.45) * tw;
+  }
+
+  col += accent.rgb * s * intensity;
+
+  if (progress > 0.0) {
+    float2 dir = normalize(float2(0.9, 0.25));
+    float x = dot(uv - 0.5, dir) + 0.5;
+    float band = smoothstep(progress - 0.16, progress, x) *
+                 (1.0 - smoothstep(progress, progress + 0.2, x));
+    col = mix(col, accent.rgb, band * 0.22);
+  }
+
+  return float4(col, base.a);
+}
+
+struct EffectQuadVertexOutput {
+  uint effect_id [[flat]];
+  float4 position [[position]];
+  float clip_distance [[clip_distance]][4];
+};
+
+struct EffectQuadFragmentInput {
+  uint effect_id [[flat]];
+  float4 position [[position]];
+};
+
+vertex EffectQuadVertexOutput effect_quad_vertex(
+    uint unit_vertex_id [[vertex_id]], uint effect_id [[instance_id]],
+    constant float2 *unit_vertices [[buffer(EffectQuadInputIndex_Vertices)]],
+    constant EffectQuad *effects [[buffer(EffectQuadInputIndex_Effects)]],
+    constant Size_DevicePixels *viewport_size
+    [[buffer(EffectQuadInputIndex_ViewportSize)]]) {
+  float2 unit_vertex = unit_vertices[unit_vertex_id];
+  EffectQuad fx = effects[effect_id];
+  float4 device_position =
+      to_device_position(unit_vertex, fx.bounds, viewport_size);
+  float4 clip_distance = distance_from_clip_rect(unit_vertex, fx.bounds,
+                                                 fx.content_mask.bounds);
+  return EffectQuadVertexOutput{
+      effect_id, device_position,
+      {clip_distance.x, clip_distance.y, clip_distance.z, clip_distance.w}};
+}
+
+fragment float4 effect_quad_fragment(EffectQuadFragmentInput input [[stage_in]],
+                                     constant EffectQuad *effects
+                                     [[buffer(EffectQuadInputIndex_Effects)]]) {
+  EffectQuad fx = effects[input.effect_id];
+  float4 color = evaluate_effect(fx, input.position.xy);
+  color.a *= edge_fade_alpha(input.position.xy, fx.fade);
+  float distance = quad_sdf(input.position.xy, fx.bounds, fx.corner_radii);
+  color.a *= saturate(0.5 - distance);
+  return color;
+}

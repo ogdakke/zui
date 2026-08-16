@@ -4,7 +4,8 @@ use crate::{
     Action, AnyDrag, AnyElement, AnyImageCache, AnyTooltip, AnyView, App, AppContext, Arena, Asset,
     AsyncWindowContext, AvailableSpace, BackdropBlur, Background, BorderStyle, Bounds, BoxShadow,
     Capslock, Context, Corners, CursorHideMode, CursorStyle, Decorations, DevicePixels,
-    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity,
+    DispatchActionListener, DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, EffectKind,
+    Entity,
     EntityId, EventEmitter, FileDropEvent, FontId, Global, GlobalElementId, GlyphId, GpuSpecs,
     Hsla, InputHandler, IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke,
     KeystrokeEvent, LayoutId, LineLayoutIndex, Modifiers, ModifiersChangedEvent, MonochromeSprite,
@@ -4173,6 +4174,44 @@ impl Window {
         });
     }
 
+    /// Paint a catalogued fragment effect into the current stacking context.
+    ///
+    /// Effects are compiled into GPUI's shader library (`StarShimmer`,
+    /// `SoftNoise`, `ProgressWash`). This is not a hook for arbitrary shader
+    /// source. Time is sampled from a process-wide clock so every effect in
+    /// the frame stays phase-locked and batches as one draw.
+    ///
+    /// Call only during the paint phase. Drive animation with
+    /// [`Self::request_animation_frame`] from the element that owns the
+    /// effect, and skip that request when [`App::reduce_motion`] is set.
+    pub fn paint_effect_quad(&mut self, bounds: Bounds<Pixels>, effect: PaintEffect) {
+        self.invalidator.debug_assert_paint();
+
+        let opacity = self.element_opacity();
+        let mut color0 = effect.color0;
+        let mut color1 = effect.color1;
+        color0.a *= opacity;
+        color1.a *= opacity;
+
+        self.next_frame.scene.insert_primitive(crate::EffectQuad {
+            order: 0,
+            kind: effect.kind as u32,
+            bounds: self.snap_bounds(bounds),
+            content_mask: self.snapped_content_mask(),
+            corner_radii: effect.corner_radii.scale(self.scale_factor()),
+            fade: self.scaled_edge_fade(),
+            seed: effect.seed,
+            time: if effect.frozen {
+                0.0
+            } else {
+                effect_clock_seconds()
+            },
+            params: effect.params,
+            color0,
+            color1,
+        });
+    }
+
     /// Paint one or more quads into the scene for the next frame at the current stacking context.
     /// Quads are colored rectangular regions with an optional background, border, and corner radius.
     /// see [`fill`], [`outline`], and [`quad`] to construct this type.
@@ -6993,6 +7032,31 @@ impl From<[u8; 20]> for ElementId {
     fn from(opaque_id: [u8; 20]) -> Self {
         ElementId::OpaqueId(opaque_id)
     }
+}
+
+fn effect_clock_seconds() -> f32 {
+    use std::sync::OnceLock;
+    static EPOCH: OnceLock<std::time::Instant> = OnceLock::new();
+    EPOCH.get_or_init(std::time::Instant::now).elapsed().as_secs_f32()
+}
+
+/// Uniforms for [`Window::paint_effect_quad`].
+#[derive(Clone, Copy, Debug)]
+pub struct PaintEffect {
+    /// Catalogued effect to run.
+    pub kind: EffectKind,
+    /// Per-instance seed so adjacent tiles do not twinkle in lockstep.
+    pub seed: f32,
+    /// Effect-specific floats: `[speed, intensity, progress, density, …]`.
+    pub params: [f32; 8],
+    /// Base / background color.
+    pub color0: Hsla,
+    /// Accent / star / wash color.
+    pub color1: Hsla,
+    /// Corner radii of the effect rect.
+    pub corner_radii: Corners<Pixels>,
+    /// When true, time is held at 0 (reduced motion / static placeholder).
+    pub frozen: bool,
 }
 
 /// A rectangle to be rendered in the window at the given position and size.
