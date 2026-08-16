@@ -1482,14 +1482,14 @@ float effect_stars_layer(float2 uv, float density, float time, float seed,
   float2 f = fract(uv) - 0.5;
   float2 rnd = effect_hash22(g + seed);
   float keep = step(1.0 - density, rnd.x);
-  float2 off = (rnd - 0.5) * 0.7;
+  float2 off = (rnd - 0.5) * 0.55;
   float2 d = f - off;
   float dist = length(d);
-  float size = mix(0.012, 0.045, rnd.y);
+  float size = mix(0.035, 0.09, rnd.y);
   float core = smoothstep(size, 0.0, dist);
-  float glow = exp(-dist * mix(18.0, 40.0, rnd.y)) * 0.55;
+  float glow = exp(-dist * mix(8.0, 18.0, rnd.y)) * 0.85;
   float phase = rnd.x * 6.28318 + time * mix(1.2, 3.4, rnd.y);
-  float flicker = mix(1.0, 0.45 + 0.55 * sin(phase), twinkle);
+  float flicker = mix(1.0, 0.35 + 0.65 * sin(phase), twinkle);
   return (core + glow) * keep * flicker;
 }
 
@@ -1510,12 +1510,14 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
 
   float4 base = hsla_to_rgba(fx.color0);
   float4 accent = hsla_to_rgba(fx.color1);
+  // Never inherit a wash-style 4% alpha — the fill is the tile surface.
+  float fill_a = max(base.a, 1.0);
 
   if (fx.kind == 1u) {
     float n = effect_noise21(p * 6.0 + seed);
     n = mix(n, effect_noise21(p * 14.0 - seed * 0.3), 0.45);
     float v = n * intensity;
-    return float4(mix(base.rgb, accent.rgb, v * 0.35), base.a);
+    return float4(mix(base.rgb, accent.rgb, v * 0.45), fill_a);
   }
 
   if (fx.kind == 2u) {
@@ -1524,35 +1526,36 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
     float band = smoothstep(progress - 0.18, progress, x) *
                  (1.0 - smoothstep(progress, progress + 0.22, x));
     float wash = band * intensity;
-    return float4(mix(base.rgb, accent.rgb, wash),
-                  base.a * mix(1.0, 0.55, wash));
+    return float4(mix(base.rgb, accent.rgb, wash), fill_a);
   }
 
-  float2 drift = float2(t * 0.018, t * -0.011);
+  float2 drift = float2(t * 0.028, t * -0.017);
   float nebula = effect_noise21(p * 3.2 + drift + seed);
   nebula = mix(nebula, effect_noise21(p * 8.0 - drift * 1.4), 0.5);
-  float3 col = mix(base.rgb, accent.rgb * 0.35, nebula * 0.22 * intensity);
+  float breathe = 0.88 + 0.12 * sin(t * 0.65 + seed);
+  float3 col = mix(base.rgb, accent.rgb * 0.55, nebula * 0.38 * intensity);
+  col *= breathe;
 
   float s = 0.0;
-  s += effect_stars_layer(p * 18.0 + drift * 2.0, density, t, seed, 1.0);
-  s += effect_stars_layer(p * 32.0 - drift * 3.2, density * 0.55, t * 1.3,
+  s += effect_stars_layer(p * 14.0 + drift * 2.0, density, t, seed, 1.0);
+  s += effect_stars_layer(p * 26.0 - drift * 3.2, density * 0.6, t * 1.3,
                           seed + 17.0, 1.0) *
-       0.75;
-  s += effect_stars_layer(p * 9.0 + float2(-drift.y, drift.x) * 1.6,
-                          density * 0.22, t * 0.7, seed + 41.0, 0.65) *
-       1.35;
+       0.85;
+  s += effect_stars_layer(p * 7.5 + float2(-drift.y, drift.x) * 1.6,
+                          density * 0.28, t * 0.7, seed + 41.0, 0.7) *
+       1.55;
 
-  float2 g = floor(p * 5.5 + seed);
-  float2 f = fract(p * 5.5 + seed) - 0.5;
+  float2 g = floor(p * 5.0 + seed);
+  float2 f = fract(p * 5.0 + seed) - 0.5;
   float2 rnd = effect_hash22(g + 91.0);
-  if (rnd.x > 0.92) {
+  if (rnd.x > 0.88) {
     float2 d = f - (rnd - 0.5) * 0.3;
     float dist = length(d);
-    float spark = exp(-dist * 14.0);
-    float cross = exp(-abs(d.x) * 55.0) * exp(-abs(d.y) * 8.0) +
-                  exp(-abs(d.y) * 55.0) * exp(-abs(d.x) * 8.0);
+    float spark = exp(-dist * 10.0);
+    float cross = exp(-abs(d.x) * 36.0) * exp(-abs(d.y) * 6.0) +
+                  exp(-abs(d.y) * 36.0) * exp(-abs(d.x) * 6.0);
     float tw = 0.5 + 0.5 * sin(t * 2.2 + rnd.y * 6.28318);
-    s += (spark * 0.65 + cross * 0.45) * tw;
+    s += (spark * 0.9 + cross * 0.7) * tw;
   }
 
   col += accent.rgb * s * intensity;
@@ -1562,10 +1565,10 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
     float x = dot(uv - 0.5, dir) + 0.5;
     float band = smoothstep(progress - 0.16, progress, x) *
                  (1.0 - smoothstep(progress, progress + 0.2, x));
-    col = mix(col, accent.rgb, band * 0.22);
+    col = mix(col, accent.rgb, band * 0.28);
   }
 
-  return float4(col, base.a);
+  return float4(col, fill_a);
 }
 
 struct EffectQuadVertexOutput {
