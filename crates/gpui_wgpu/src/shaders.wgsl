@@ -1687,90 +1687,55 @@ fn effect_noise21(p: vec2<f32>) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
-fn effect_stars_layer(uv: vec2<f32>, density: f32, time: f32, seed: f32, twinkle: f32) -> f32 {
-    let g = floor(uv);
-    let f = fract(uv) - 0.5;
-    let rnd = effect_hash22(g + seed);
-    let keep = step(1.0 - density, rnd.x);
-    let off = (rnd - 0.5) * 0.55;
-    let d = f - off;
-    let dist = length(d);
-    let size = mix(0.035, 0.09, rnd.y);
-    let core = smoothstep(size, 0.0, dist);
-    let glow = exp(-dist * mix(8.0, 18.0, rnd.y)) * 0.85;
-    let phase = rnd.x * 6.28318 + time * mix(1.2, 3.4, rnd.y);
-    let flicker = mix(1.0, 0.35 + 0.65 * sin(phase), twinkle);
-    return (core + glow) * keep * flicker;
+fn effect_fbm(p: vec2<f32>) -> f32 {
+    let a = effect_noise21(p);
+    let b = effect_noise21(p * 2.03 + 17.0);
+    let c = effect_noise21(p * 3.97 + 41.0);
+    return a * 0.57 + b * 0.28 + c * 0.15;
 }
 
 fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
     let origin = fx.bounds.origin;
-    let size = max(fx.bounds.size, vec2<f32>(1.0, 1.0));
-    let uv = (position - origin) / size;
-    let aspect = fx.bounds.size.x / max(fx.bounds.size.y, 1.0);
-    let p = (uv - 0.5) * vec2<f32>(aspect, 1.0);
+    let size = fx.bounds.size;
+    let local = position - origin;
+    let safe = max(size, vec2<f32>(1.0, 1.0));
+    let uv = local / min(safe.x, safe.y);
 
     let speed = fx.params[0];
-    let intensity = fx.params[1];
+    let intensity = select(1.0, fx.params[1], fx.params[1] > 0.0);
     let progress = fx.params[2];
-    let density = select(0.18, fx.params[3], fx.params[3] > 0.0);
+    let cell = select(22.0, fx.params[3], fx.params[3] > 4.0);
     let t = fx.time * speed;
     let seed = fx.seed;
-
-    let base = hsla_to_rgba(fx.color0);
     let accent = hsla_to_rgba(fx.color1);
-    let fill_a = max(base.a, 1.0);
 
+    let drift = vec2<f32>(t * 0.055, -t * 0.04);
+    var field = effect_fbm(uv * 2.35 + drift + seed * 0.17);
     if (fx.kind == 1u) {
-        var n = effect_noise21(p * 6.0 + seed);
-        n = mix(n, effect_noise21(p * 14.0 - seed * 0.3), 0.45);
-        let v = n * intensity;
-        return vec4<f32>(mix(base.rgb, accent.rgb, v * 0.45), fill_a);
+        field = mix(0.46, field, 0.32);
     }
-
-    if (fx.kind == 2u) {
-        let dir = normalize(vec2<f32>(0.85, 0.35));
-        let x = dot(uv - 0.5, dir) + 0.5;
-        let band = smoothstep(progress - 0.18, progress, x) * (1.0 - smoothstep(progress, progress + 0.22, x));
-        let wash = band * intensity;
-        return vec4<f32>(mix(base.rgb, accent.rgb, wash), fill_a);
-    }
-
-    let drift = vec2<f32>(t * 0.028, t * -0.017);
-    var nebula = effect_noise21(p * 3.2 + drift + seed);
-    nebula = mix(nebula, effect_noise21(p * 8.0 - drift * 1.4), 0.5);
-    let breathe = 0.88 + 0.12 * sin(t * 0.65 + seed);
-    var col = mix(base.rgb, accent.rgb * 0.55, nebula * 0.38 * intensity);
-    col *= breathe;
-
-    var s = 0.0;
-    s += effect_stars_layer(p * 14.0 + drift * 2.0, density, t, seed, 1.0);
-    s += effect_stars_layer(p * 26.0 - drift * 3.2, density * 0.6, t * 1.3, seed + 17.0, 1.0) * 0.85;
-    s += effect_stars_layer(p * 7.5 + vec2<f32>(-drift.y, drift.x) * 1.6, density * 0.28, t * 0.7, seed + 41.0, 0.7) * 1.55;
-
-    let g = floor(p * 5.0 + seed);
-    let f = fract(p * 5.0 + seed) - 0.5;
-    let rnd = effect_hash22(g + 91.0);
-    if (rnd.x > 0.88) {
-        let d = f - (rnd - 0.5) * 0.3;
-        let dist = length(d);
-        let spark = exp(-dist * 10.0);
-        let cross = exp(-abs(d.x) * 36.0) * exp(-abs(d.y) * 6.0)
-            + exp(-abs(d.y) * 36.0) * exp(-abs(d.x) * 6.0);
-        let tw = 0.5 + 0.5 * sin(t * 2.2 + rnd.y * 6.28318);
-        s += (spark * 0.9 + cross * 0.7) * tw;
-    }
-
-    col += accent.rgb * s * intensity;
-
     if (progress > 0.0) {
-        let dir = normalize(vec2<f32>(0.9, 0.25));
-        let x = dot(uv - 0.5, dir) + 0.5;
-        let band = smoothstep(progress - 0.16, progress, x) * (1.0 - smoothstep(progress, progress + 0.2, x));
-        col = mix(col, accent.rgb, band * 0.28);
+        let dir = normalize(vec2<f32>(0.9, 0.22));
+        let x = dot(local / safe - 0.5, dir) + 0.5;
+        let band = smoothstep(progress - 0.22, progress, x) * (1.0 - smoothstep(progress, progress + 0.26, x));
+        field = max(field, band * 0.8);
     }
 
-    return vec4<f32>(col, fill_a);
+    let wash = mix(0.02, 0.13, field) * intensity;
+
+    let grid = local / cell;
+    let id = floor(grid);
+    let f = fract(grid) - 0.5;
+    let count = size / cell;
+    let in_grid = step(0.0, id.x) * step(0.0, id.y) * step(id.x, count.x - 1.0) * step(id.y, count.y - 1.0);
+    let dist = length(f) * cell;
+    let radius = max(1.6, cell * 0.145);
+    let dot_m = (1.0 - smoothstep(radius - 0.55, radius + 0.55, dist)) * in_grid;
+    let lit = smoothstep(0.22, 0.70, field);
+    let dot_a = dot_m * mix(0.10, 0.88, lit) * intensity;
+
+    let alpha = wash + dot_a * (1.0 - wash);
+    return vec4<f32>(accent.rgb, alpha);
 }
 
 struct EffectQuadVarying {
