@@ -1710,9 +1710,10 @@ fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
 
     let seed2 = effect_hash22(vec2<f32>(fx.seed, fx.seed * 1.6180339887));
     let heading = normalize(seed2 * 2.0 - 1.0);
-    let scale = mix(1.7, 2.9, seed2.x);
+    let scale = mix(3.4, 4.8, seed2.x);
     let drift = heading * t * 0.22;
     var field = effect_fbm(uv * scale + drift + seed2 * 6.0);
+    field = mix(field, effect_fbm(uv * scale * 1.9 - drift.yx + 3.1), 0.32);
     if (fx.kind == 1u) {
         field = mix(0.40, field, 0.38);
     }
@@ -1732,8 +1733,8 @@ fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
     let dist = length(f) * cell;
     let radius = max(1.6, cell * 0.145);
     let dot_m = (1.0 - smoothstep(radius - 0.55, radius + 0.55, dist)) * in_grid;
-    let lit = smoothstep(0.54, 0.86, field);
-    let dot_a = dot_m * lit * lit * intensity;
+    let lit = smoothstep(0.22, 0.78, field);
+    let dot_a = dot_m * mix(0.02, 1.0, lit) * intensity;
     return vec4<f32>(accent.rgb, dot_a);
 }
 

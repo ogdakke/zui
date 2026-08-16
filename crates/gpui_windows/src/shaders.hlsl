@@ -1537,9 +1537,10 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
 
     float2 seed2 = effect_hash22(float2(fx.seed, fx.seed * 1.6180339887));
     float2 heading = normalize(seed2 * 2.0 - 1.0);
-    float scale = lerp(1.7, 2.9, seed2.x);
+    float scale = lerp(3.4, 4.8, seed2.x);
     float2 drift = heading * t * 0.22;
     float field = effect_fbm(uv * scale + drift + seed2 * 6.0);
+    field = lerp(field, effect_fbm(uv * scale * 1.9 - drift.yx + 3.1), 0.32);
     if (fx.kind == 1u) {
         field = lerp(0.40, field, 0.38);
     }
@@ -1559,8 +1560,8 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
     float dist = length(f) * cell;
     float radius = max(1.6, cell * 0.145);
     float dot_m = (1.0 - smoothstep(radius - 0.55, radius + 0.55, dist)) * in_grid;
-    float lit = smoothstep(0.54, 0.86, field);
-    float dot_a = dot_m * lit * lit * intensity;
+    float lit = smoothstep(0.22, 0.78, field);
+    float dot_a = dot_m * lerp(0.02, 1.0, lit) * intensity;
     return float4(accent.rgb, dot_a);
 }
 
