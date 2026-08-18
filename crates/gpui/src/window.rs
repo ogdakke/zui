@@ -687,6 +687,48 @@ impl HitboxId {
     }
 }
 
+/// How [`EdgeFade`] maps the 0..1 distance ramp onto opacity.
+///
+/// `t = 0` is the fade edge (fully transparent); `t = 1` is a `band`
+/// further in (fully opaque).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum EdgeFadeEase {
+    /// `t²` — the historical default. Drops fast near the fade edge so
+    /// content sliding under glass chrome does not linger half-visible.
+    #[default]
+    Quadratic,
+    /// `1 - (1-t)⁴` — holds the edge's fade, then snaps toward full
+    /// opacity as you move inward. A large image band stays solid almost
+    /// to the chrome, with a short dissolve at the edge.
+    Exponential,
+}
+
+impl EdgeFadeEase {
+    pub(crate) fn to_param(self) -> f32 {
+        match self {
+            Self::Quadratic => 2.0,
+            Self::Exponential => -4.0,
+        }
+    }
+
+    pub(crate) fn apply(self, ramp: f32) -> f32 {
+        apply_edge_fade_ease(ramp, self.to_param())
+    }
+}
+
+/// Shader/CPU shared curve. `ease > 0` is ease-in `t^ease` (`2` = quadratic);
+/// `ease < 0` is ease-out `1-(1-t)^|ease|`; `ease == 0` is quadratic so a
+/// zeroed [`crate::EdgeFadeParams`] stays a no-op / historical default.
+pub(crate) fn apply_edge_fade_ease(ramp: f32, ease: f32) -> f32 {
+    let t = ramp.clamp(0.0, 1.0);
+    if ease < 0.0 {
+        1.0 - (1.0 - t).powf(-ease)
+    } else {
+        let power = if ease > 0.0 { ease } else { 2.0 };
+        t.powf(power)
+    }
+}
+
 /// A scoped vertical edge fade (see [`Window::with_edge_fade`]): primitives
 /// painted inside the scope get their opacity multiplied by a ramp that runs
 /// from 0 at an active edge of `bounds` to 1 a `band` further in. Built for
@@ -718,6 +760,9 @@ pub struct EdgeFade {
     pub left: bool,
     /// Fade primitives approaching the region's right edge.
     pub right: bool,
+    /// Easing applied to the 0..1 distance ramp. Defaults to
+    /// [`EdgeFadeEase::Quadratic`].
+    pub ease: EdgeFadeEase,
 }
 
 impl EdgeFade {
@@ -735,6 +780,34 @@ impl EdgeFade {
 
     fn right_band(&self) -> f32 {
         self.band_right.unwrap_or(self.band).0.max(1.0)
+    }
+}
+
+#[cfg(test)]
+mod edge_fade_ease_tests {
+    use super::{EdgeFadeEase, apply_edge_fade_ease};
+
+    #[test]
+    fn quadratic_is_t_squared() {
+        assert_eq!(apply_edge_fade_ease(0.0, 2.0), 0.0);
+        assert_eq!(apply_edge_fade_ease(0.5, 2.0), 0.25);
+        assert_eq!(apply_edge_fade_ease(1.0, 2.0), 1.0);
+        assert_eq!(apply_edge_fade_ease(0.5, 0.0), 0.25, "zeroed params stay quadratic");
+        assert_eq!(EdgeFadeEase::Quadratic.apply(0.5), 0.25);
+    }
+
+    #[test]
+    fn exponential_holds_the_edge_then_snaps_inward() {
+        let mid = EdgeFadeEase::Exponential.apply(0.5);
+        assert!(mid > 0.9, "mid-band is already almost opaque, got {mid}");
+        assert!(mid > EdgeFadeEase::Quadratic.apply(0.5));
+        assert_eq!(EdgeFadeEase::Exponential.apply(0.0), 0.0);
+        assert!((EdgeFadeEase::Exponential.apply(1.0) - 1.0).abs() < 1e-6);
+        let near_edge = EdgeFadeEase::Exponential.apply(0.15);
+        assert!(
+            near_edge > EdgeFadeEase::Quadratic.apply(0.15),
+            "recovers faster just off the edge"
+        );
     }
 }
 
@@ -3684,11 +3757,7 @@ impl Window {
             ramp = ramp
                 .min(((fade.bounds.right().0 - center.x.0) / fade.right_band()).clamp(0.0, 1.0));
         }
-        // Quadratic ease-in: a linear ramp reads weak over a wide band —
-        // content sliding under glass chrome stayed half-visible for most of
-        // the traverse. Squaring drops it fast near the fade edge while
-        // keeping the far end fully opaque.
-        opacity * ramp * ramp
+        opacity * fade.ease.apply(ramp)
     }
 
     /// The element opacity for a primitive covering `bounds`: the scoped
@@ -3722,8 +3791,7 @@ impl Window {
                 ((fade.bounds.right().0 - bounds.right().0) / fade.right_band()).clamp(0.0, 1.0),
             );
         }
-        // Quadratic ease-in — see element_opacity_at.
-        opacity * ramp * ramp
+        opacity * fade.ease.apply(ramp)
     }
 
     /// The active [`EdgeFade`] and rounded-clip scopes as device-pixel
@@ -3775,6 +3843,7 @@ impl Window {
             } else {
                 0.0
             },
+            ease: fade.ease.to_param(),
             ..Default::default()
         }
     }

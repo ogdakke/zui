@@ -1260,10 +1260,19 @@ float2x2 rotate2d(float angle) {
     return float2x2(c, -s, s, c);
 }
 
-// Scoped edge fade, PER PIXEL (Quad::fade / PolychromeSprite::fade): a
-// squared ramp from 0 at the fade edge to 1 a band further in, matching the
+// Scoped edge fade, PER PIXEL (Quad::fade / PolychromeSprite::fade): an
+// eased ramp from 0 at the fade edge to 1 a band further in, matching the
 // CPU-side per-glyph curve — all four edges. Zero band = edge disabled; a
 // zeroed struct is a no-op (returns 1).
+// ease > 0: t^ease (2 = quadratic). ease < 0: 1-(1-t)^|ease|. ease == 0: t².
+float apply_edge_fade_ease(float ramp, float ease) {
+  if (ease < 0.0) {
+    return 1.0 - pow(1.0 - ramp, -ease);
+  }
+  float power = ease > 0.0 ? ease : 2.0;
+  return pow(ramp, power);
+}
+
 float edge_fade_alpha(float2 position, EdgeFadeParams fade) {
   float ramp = 1.0;
   if (fade.band_top > 0.0) {
@@ -1278,7 +1287,7 @@ float edge_fade_alpha(float2 position, EdgeFadeParams fade) {
   if (fade.band_right > 0.0) {
     ramp = min(ramp, clamp((fade.right_x - position.x) / fade.band_right, 0.0, 1.0));
   }
-  float alpha = ramp * ramp;
+  float alpha = apply_edge_fade_ease(ramp, fade.ease);
   if (fade.clip_right > fade.clip_left) {
     // Rounded-rectangle clip: signed distance to the scope's edge, with a
     // one-pixel antialiased transition.

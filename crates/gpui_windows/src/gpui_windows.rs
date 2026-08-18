@@ -91,7 +91,7 @@ mod tests {
                 "float clip_right;",
                 "float clip_bottom;",
                 "float clip_radius;",
-                "float clip_pad;",
+                "float ease;",
             ],
         );
     }

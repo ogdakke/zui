@@ -531,10 +531,19 @@ struct EdgeFadeParams {
     clip_right: f32,
     clip_bottom: f32,
     clip_radius: f32,
-    clip_pad: f32,
+    ease: f32,
 }
 
-// Per-pixel scoped edge fade — squared ramp, matching the CPU per-glyph
+// ease > 0: t^ease (2 = quadratic). ease < 0: 1-(1-t)^|ease|. ease == 0: t².
+fn apply_edge_fade_ease(ramp: f32, ease: f32) -> f32 {
+    if (ease < 0.0) {
+        return 1.0 - pow(1.0 - ramp, -ease);
+    }
+    let power = select(2.0, ease, ease > 0.0);
+    return pow(ramp, power);
+}
+
+// Per-pixel scoped edge fade — eased ramp, matching the CPU per-glyph
 // curve, all four edges. A zeroed struct is a no-op.
 fn edge_fade_alpha(position: vec2<f32>, fade: EdgeFadeParams) -> f32 {
     var ramp = 1.0;
@@ -550,7 +559,7 @@ fn edge_fade_alpha(position: vec2<f32>, fade: EdgeFadeParams) -> f32 {
     if (fade.band_right > 0.0) {
         ramp = min(ramp, clamp((fade.right_x - position.x) / fade.band_right, 0.0, 1.0));
     }
-    var alpha = ramp * ramp;
+    var alpha = apply_edge_fade_ease(ramp, fade.ease);
     if (fade.clip_right > fade.clip_left) {
         // Rounded-rectangle clip: signed distance to the scope's edge, with
         // a one-pixel antialiased transition.

@@ -54,7 +54,7 @@ struct EdgeFadeParams {
     float clip_right;
     float clip_bottom;
     float clip_radius;
-    float clip_pad;
+    float ease;
 };
 
 struct Hsla {
@@ -141,8 +141,17 @@ float4 distance_from_clip_rect_transformed(float2 unit_vertex, Bounds bounds, Bo
     return distance_from_clip_rect_impl(transformed, clip_bounds);
 }
 
+// ease > 0: t^ease (2 = quadratic). ease < 0: 1-(1-t)^|ease|. ease == 0: t^2.
+float apply_edge_fade_ease(float ramp, float ease) {
+    if (ease < 0.0) {
+        return 1.0 - pow(1.0 - ramp, -ease);
+    }
+    float power = ease > 0.0 ? ease : 2.0;
+    return pow(ramp, power);
+}
+
 // Per-pixel scoped edge fade. A zero band disables that edge and a zeroed
-// struct is a no-op. Squaring matches gpui's CPU, Metal, and WGPU curves.
+// struct is a no-op. The eased ramp matches gpui's CPU, Metal, and WGPU curves.
 float edge_fade_alpha(float2 position, EdgeFadeParams fade) {
     float ramp = 1.0;
     if (fade.band_top > 0.0) {
@@ -157,7 +166,7 @@ float edge_fade_alpha(float2 position, EdgeFadeParams fade) {
     if (fade.band_right > 0.0) {
         ramp = min(ramp, clamp((fade.right_x - position.x) / fade.band_right, 0.0, 1.0));
     }
-    float alpha = ramp * ramp;
+    float alpha = apply_edge_fade_ease(ramp, fade.ease);
     if (fade.clip_right > fade.clip_left) {
         // Rounded-rectangle clip: signed distance to the scope's edge, with
         // a one-pixel antialiased transition.
