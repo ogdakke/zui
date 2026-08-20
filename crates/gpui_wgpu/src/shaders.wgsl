@@ -1680,6 +1680,10 @@ fn effect_hash21(p: vec2<f32>) -> f32 {
     return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453123);
 }
 
+fn effect_hash31(p: vec3<f32>) -> f32 {
+    return fract(sin(dot(p, vec3<f32>(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
 fn effect_hash22(p: vec2<f32>) -> vec2<f32> {
     let n = sin(dot(p, vec2<f32>(127.1, 311.7)));
     return fract(vec2<f32>(262144.0, 32768.0) * n);
@@ -1703,6 +1707,21 @@ fn effect_fbm(p: vec2<f32>) -> f32 {
     return a * 0.57 + b * 0.28 + c * 0.15;
 }
 
+fn effect_noise31(p: vec3<f32>) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = mix(effect_hash31(i), effect_hash31(i + vec3<f32>(1.0, 0.0, 0.0)), u.x);
+    let b = mix(effect_hash31(i + vec3<f32>(0.0, 1.0, 0.0)), effect_hash31(i + vec3<f32>(1.0, 1.0, 0.0)), u.x);
+    let c = mix(effect_hash31(i + vec3<f32>(0.0, 0.0, 1.0)), effect_hash31(i + vec3<f32>(1.0, 0.0, 1.0)), u.x);
+    let d = mix(effect_hash31(i + vec3<f32>(0.0, 1.0, 1.0)), effect_hash31(i + vec3<f32>(1.0, 1.0, 1.0)), u.x);
+    return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+fn effect_fbm31(p: vec3<f32>) -> f32 {
+    return effect_noise31(p) * 0.68 + effect_noise31(p * 2.03 + 17.0) * 0.32;
+}
+
 fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
     let origin = fx.bounds.origin;
     let size = fx.bounds.size;
@@ -1718,11 +1737,16 @@ fn evaluate_effect(fx: EffectQuad, position: vec2<f32>) -> vec4<f32> {
     let accent = hsla_to_rgba(fx.color1);
 
     let seed2 = effect_hash22(vec2<f32>(fx.seed, fx.seed * 1.6180339887));
-    let heading = normalize(seed2 * 2.0 - 1.0);
-    let scale = mix(3.4, 4.8, seed2.x);
-    let drift = heading * t * 0.22;
-    var field = effect_fbm(uv * scale + drift + seed2 * 6.0);
-    field = mix(field, effect_fbm(uv * scale * 1.9 - drift.yx + 3.1), 0.32);
+    let variant = floor(fx.params[4] + 0.5);
+    var stretch = vec2<f32>(1.0, 1.0);
+    var scale = mix(3.4, 4.8, seed2.x);
+    if (variant < 0.5) { stretch = vec2<f32>(0.68, 1.65); scale = 2.25; }
+    else if (variant < 1.5) { stretch = vec2<f32>(1.65, 0.72); scale = 2.45; }
+    else if (variant < 2.5) { stretch = vec2<f32>(0.92, 1.18); scale = 2.60; }
+    else { stretch = vec2<f32>(1.35, 1.15); scale = 2.35; }
+    let domain = uv * stretch * scale + seed2 * (13.0 + variant * 7.0);
+    var field = effect_fbm31(vec3<f32>(domain, t * 0.34));
+    field = mix(field, effect_fbm31(vec3<f32>(domain * 1.9 + 3.1, t * 0.47 + 11.0)), 0.32);
     if (fx.kind == 1u) {
         field = mix(0.40, field, 0.38);
     }

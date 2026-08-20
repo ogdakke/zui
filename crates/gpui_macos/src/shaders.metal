@@ -1469,6 +1469,10 @@ float effect_hash21(float2 p) {
   return fract(sin(dot(p, float2(127.1, 311.7))) * 43758.5453123);
 }
 
+float effect_hash31(float3 p) {
+  return fract(sin(dot(p, float3(127.1, 311.7, 74.7))) * 43758.5453123);
+}
+
 float2 effect_hash22(float2 p) {
   float n = sin(dot(p, float2(127.1, 311.7)));
   return fract(float2(262144.0, 32768.0) * n);
@@ -1492,6 +1496,21 @@ float effect_fbm(float2 p) {
   return a * 0.57 + b * 0.28 + c * 0.15;
 }
 
+float effect_noise31(float3 p) {
+  float3 i = floor(p);
+  float3 f = fract(p);
+  float3 u = f * f * (3.0 - 2.0 * f);
+  float a = mix(effect_hash31(i), effect_hash31(i + float3(1.0, 0.0, 0.0)), u.x);
+  float b = mix(effect_hash31(i + float3(0.0, 1.0, 0.0)), effect_hash31(i + float3(1.0, 1.0, 0.0)), u.x);
+  float c = mix(effect_hash31(i + float3(0.0, 0.0, 1.0)), effect_hash31(i + float3(1.0, 0.0, 1.0)), u.x);
+  float d = mix(effect_hash31(i + float3(0.0, 1.0, 1.0)), effect_hash31(i + float3(1.0, 1.0, 1.0)), u.x);
+  return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+float effect_fbm31(float3 p) {
+  return effect_noise31(p) * 0.68 + effect_noise31(p * 2.03 + 17.0) * 0.32;
+}
+
 float4 evaluate_effect(EffectQuad fx, float2 position) {
   float2 origin = float2(fx.bounds.origin.x, fx.bounds.origin.y);
   float2 size = float2(fx.bounds.size.width, fx.bounds.size.height);
@@ -1506,14 +1525,19 @@ float4 evaluate_effect(EffectQuad fx, float2 position) {
   float t = fx.time * speed;
   float4 accent = hsla_to_rgba(fx.color1);
 
-  // Per-tile domain: offset, scale, and flow heading from the seed so
-  // neighboring skeletons do not share a wavefront.
+  // A time slice through seeded 3D noise keeps the lattice fixed while the
+  // field below it changes continuously without returning to a short loop.
   float2 seed2 = effect_hash22(float2(fx.seed, fx.seed * 1.6180339887));
-  float2 heading = normalize(seed2 * 2.0 - 1.0);
+  float variant = floor(fx.params[4] + 0.5);
+  float2 stretch = float2(1.0, 1.0);
   float scale = mix(3.4, 4.8, seed2.x);
-  float2 drift = heading * t * 0.22;
-  float field = effect_fbm(uv * scale + drift + seed2 * 6.0);
-  field = mix(field, effect_fbm(uv * scale * 1.9 - drift.yx + 3.1), 0.32);
+  if (variant < 0.5) { stretch = float2(0.68, 1.65); scale = 2.25; }
+  else if (variant < 1.5) { stretch = float2(1.65, 0.72); scale = 2.45; }
+  else if (variant < 2.5) { stretch = float2(0.92, 1.18); scale = 2.60; }
+  else { stretch = float2(1.35, 1.15); scale = 2.35; }
+  float2 domain = uv * stretch * scale + seed2 * (13.0 + variant * 7.0);
+  float field = effect_fbm31(float3(domain, t * 0.34));
+  field = mix(field, effect_fbm31(float3(domain * 1.9 + 3.1, t * 0.47 + 11.0)), 0.32);
   if (fx.kind == 1u) {
     field = mix(0.40, field, 0.38);
   }
